@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>buddy up!</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyDXfjJBDfPA3Kc7AFF_UgRYu2PHClUm7Sg",
+      authDomain: "side-by-side-6ce11.firebaseapp.com",
+      projectId: "side-by-side-6ce11",
+      storageBucket: "side-by-side-6ce11.firebasestorage.app",
+      messagingSenderId: "495342076604",
+      appId: "1:495342076604:web:f5e585cf3f0e69b1d306b9",
+      measurementId: "G-T6HNZV56ZL"
+    };
+
+    const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents`;
+    const apiKey = firebaseConfig.apiKey;
+
+    const firestoreHelpers = {
+      toFirestore(obj) {
+        const fields = {};
+        for (const [key, value] of Object.entries(obj)) {
+          if (value === null || value === undefined) {
+            fields[key] = { nullValue: null };
+          } else if (typeof value === 'string') {
+            fields[key] = { stringValue: value };
+          } else if (typeof value === 'number') {
+            fields[key] = { integerValue: String(value) };
+          } else if (typeof value === 'boolean') {
+            fields[key] = { booleanValue: value };
+          } else if (Array.isArray(value)) {
+            fields[key] = { 
+              arrayValue: { 
+                values: value.map(v => {
+                  if (typeof v === 'boolean') return { booleanValue: v };
+                  if (typeof v === 'string') return { stringValue: v };
+                  if (typeof v === 'number') return { integerValue: String(v) };
+                  return { nullValue: null };
+                })
+              }
+            };
+          }
+        }
+        return { fields };
+      },
+
+      fromFirestore(doc) {
+        if (!doc || !doc.fields) return null;
+        const obj = {};
+        for (const [key, value] of Object.entries(doc.fields)) {
+          if ('stringValue' in value) obj[key] = value.stringValue;
+          else if ('integerValue' in value) obj[key] = parseInt(value.integerValue);
+          else if ('booleanValue' in value) obj[key] = value.booleanValue;
+          else if ('nullValue' in value) obj[key] = null;
+          else if ('arrayValue' in value) {
+            obj[key] = (value.arrayValue.values || []).map(v => {
+              if ('booleanValue' in v) return v.booleanValue;
+              if ('stringValue' in v) return v.stringValue;
+              if ('integerValue' in v) return parseInt(v.integerValue);
+              return null;
+            });
+          }
+        }
+        return obj;
+      },
+
+      async getDoc(collection, docId) {
+        try {
+          const res = await fetch(`${firestoreUrl}/${collection}/${docId}?key=${apiKey}`);
+          if (!res.ok) return null;
+          const data = await res.json();
+          return this.fromFirestore(data);
+        } catch (e) {
+          console.error('Firestore get error:', e);
+          return null;
+        }
+      },
+
+      async setDoc(collection, docId, data) {
+        try {
+          const res = await fetch(`${firestoreUrl}/${collection}/${docId}?key=${apiKey}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.toFirestore(data))
+          });
+          if (!res.ok) {
+            const err = await res.text();
+            console.error('Firestore error response:', err);
+          }
+          return res.ok;
+        } catch (e) {
+          console.error('Firestore set error:', e);
+          return false;
+        }
+      }
+    };
+
+    function Sparkles({ className }) {
+      return (
+        <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+          <path d="M5 3v4"/>
+          <path d="M19 17v4"/>
+          <path d="M3 5h4"/>
+          <path d="M17 19h4"/>
+        </svg>
+      );
+    }
+
+    function App() {
+      const taglines = [
+        "keep each other in check",
+        "lock in together",
+        "goals need a witness",
+        "better together than alone"
+      ];
+      const [tagline] = useState(() => taglines[Math.floor(Math.random() * taglines.length)]);
+      
+      const [view, setView] = useState('loading');
+      const [yourName, setYourName] = useState('');
+      const [partnerName, setPartnerName] = useState('');
+      const [goal, setGoal] = useState(10);
+      const [goalTitle, setGoalTitle] = useState('');
+      const [yourCount, setYourCount] = useState(0);
+      const [partnerCount, setPartnerCount] = useState(0);
+      const [yourDailyProgress, setYourDailyProgress] = useState([false, false, false, false, false, false, false]);
+      const [partnerDailyProgress, setPartnerDailyProgress] = useState([false, false, false, false, false, false, false]);
+      const [shareableLink, setShareableLink] = useState('');
+      const [userId, setUserId] = useState('');
+      const [inputName, setInputName] = useState('');
+      const [inputGoal, setInputGoal] = useState('10');
+      const [inputGoalTitle, setInputGoalTitle] = useState('');
+      const [currentGoalId, setCurrentGoalId] = useState('');
+      const [linkCopied, setLinkCopied] = useState(false);
+      const linkInputRef = useRef(null);
+
+      const generateGoalId = () => {
+        return 'goal_' + Math.random().toString(36).substr(2, 9);
+      };
+
+      const getGoalIdFromUrl = () => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('g');
+      };
+      
+      const getBrowserUserId = (goalId) => {
+        const key = `sbs_user_${goalId}`;
+        return localStorage.getItem(key);
+      };
+      
+      const setBrowserUserId = (goalId, oderId) => {
+        const key = `sbs_user_${goalId}`;
+        localStorage.setItem(key, oderId);
+      };
+
+      useEffect(() => {
+        const goalId = getGoalIdFromUrl();
+        
+        if (!goalId) {
+          setView('create');
+        } else {
+          setCurrentGoalId(goalId);
+          const timeoutId = setTimeout(() => {
+            setView('create');
+          }, 5000);
+          
+          loadGoal(goalId).finally(() => clearTimeout(timeoutId));
+        }
+      }, []);
+
+      const loadGoal = async (goalId) => {
+        try {
+          const data = await firestoreHelpers.getDoc('goals', goalId);
+          
+          if (!data) {
+            setView('create');
+            return;
+          }
+
+          const savedUserId = getBrowserUserId(goalId);
+          
+          if (savedUserId) {
+            setUserId(savedUserId);
+            setGoal(data.goal);
+            setGoalTitle(data.goalTitle || '');
+            setCurrentGoalId(goalId);
+            
+            if (savedUserId === 'user1') {
+              setYourName(data.user1Name);
+              setPartnerName(data.user2Name || 'Waiting...');
+              setYourCount(data.user1Count || 0);
+              setPartnerCount(data.user2Count || 0);
+              setYourDailyProgress(data.user1DailyProgress || [false, false, false, false, false, false, false]);
+              setPartnerDailyProgress(data.user2DailyProgress || [false, false, false, false, false, false, false]);
+            } else {
+              setYourName(data.user2Name);
+              setPartnerName(data.user1Name);
+              setYourCount(data.user2Count || 0);
+              setPartnerCount(data.user1Count || 0);
+              setYourDailyProgress(data.user2DailyProgress || [false, false, false, false, false, false, false]);
+              setPartnerDailyProgress(data.user1DailyProgress || [false, false, false, false, false, false, false]);
+            }
+            
+            setView('tracker');
+          } else {
+            if (data.user2Name) {
+              alert('This accountability pair is already full!');
+              setView('create');
+            } else {
+              setGoal(data.goal);
+              setGoalTitle(data.goalTitle || '');
+              setPartnerName(data.user1Name);
+              setCurrentGoalId(goalId);
+              setView('join');
+            }
+          }
+        } catch (error) {
+          console.error('Error loading goal:', error);
+          setView('create');
+        }
+      };
+
+      const createGoal = async () => {
+        if (!inputName.trim() || !inputGoal.trim() || !inputGoalTitle.trim()) return;
+        
+        const goalId = generateGoalId();
+        const goalData = {
+          goal: parseInt(inputGoal),
+          goalTitle: inputGoalTitle.trim(),
+          user1Name: inputName.trim(),
+          user2Name: null,
+          user1Count: 0,
+          user2Count: 0,
+          user1DailyProgress: [false, false, false, false, false, false, false],
+          user2DailyProgress: [false, false, false, false, false, false, false],
+          weekStart: new Date().toISOString()
+        };
+
+        try {
+          const success = await firestoreHelpers.setDoc('goals', goalId, goalData);
+          if (!success) throw new Error('Failed to save');
+          
+          setBrowserUserId(goalId, 'user1');
+          
+          setUserId('user1');
+          setYourName(inputName.trim());
+          setGoal(parseInt(inputGoal));
+          setGoalTitle(inputGoalTitle.trim());
+          setYourCount(0);
+          setPartnerCount(0);
+          setYourDailyProgress([false, false, false, false, false, false, false]);
+          setPartnerDailyProgress([false, false, false, false, false, false, false]);
+          setCurrentGoalId(goalId);
+          
+          const link = `${window.location.origin}${window.location.pathname}?g=${goalId}`;
+          setShareableLink(link);
+          
+          window.history.pushState({}, '', `?g=${goalId}`);
+          
+          setView('share');
+        } catch (error) {
+          console.error('Error creating goal:', error);
+          alert('Failed to create goal. Please try again.');
+        }
+      };
+
+      const joinGoal = async () => {
+        if (!inputName.trim()) return;
+        
+        const goalId = currentGoalId || getGoalIdFromUrl();
+        
+        try {
+          const data = await firestoreHelpers.getDoc('goals', goalId);
+          if (!data) throw new Error('Goal not found');
+          
+          data.user2Name = inputName.trim();
+          
+          await firestoreHelpers.setDoc('goals', goalId, data);
+          setBrowserUserId(goalId, 'user2');
+          
+          setUserId('user2');
+          setYourName(inputName.trim());
+          setPartnerName(data.user1Name);
+          setGoal(data.goal);
+          setYourCount(0);
+          setPartnerCount(data.user1Count || 0);
+          setYourDailyProgress([false, false, false, false, false, false, false]);
+          setPartnerDailyProgress(data.user1DailyProgress || [false, false, false, false, false, false, false]);
+          
+          setView('tracker');
+        } catch (error) {
+          console.error('Error joining goal:', error);
+          alert('Failed to join goal. Please try again.');
+        }
+      };
+
+      const incrementCount = async () => {
+        const goalId = currentGoalId || getGoalIdFromUrl();
+        
+        try {
+          const data = await firestoreHelpers.getDoc('goals', goalId);
+          if (!data) return;
+          
+          const today = new Date();
+          const dayOfWeek = (today.getDay() + 6) % 7;
+          
+          if (userId === 'user1') {
+            data.user1Count = (data.user1Count || 0) + 1;
+            setYourCount(data.user1Count);
+            
+            const newProgress = [...(data.user1DailyProgress || [false, false, false, false, false, false, false])];
+            newProgress[dayOfWeek] = true;
+            data.user1DailyProgress = newProgress;
+            setYourDailyProgress(newProgress);
+          } else {
+            data.user2Count = (data.user2Count || 0) + 1;
+            setYourCount(data.user2Count);
+            
+            const newProgress = [...(data.user2DailyProgress || [false, false, false, false, false, false, false])];
+            newProgress[dayOfWeek] = true;
+            data.user2DailyProgress = newProgress;
+            setYourDailyProgress(newProgress);
+          }
+          
+          await firestoreHelpers.setDoc('goals', goalId, data);
+          
+          setTimeout(() => refreshCounts(), 500);
+        } catch (error) {
+          console.error('Error incrementing count:', error);
+        }
+      };
+
+      const resetWeek = async () => {
+        const goalId = currentGoalId || getGoalIdFromUrl();
+        
+        try {
+          const data = await firestoreHelpers.getDoc('goals', goalId);
+          if (!data) return;
+          
+          data.user1Count = 0;
+          data.user2Count = 0;
+          data.user1DailyProgress = [false, false, false, false, false, false, false];
+          data.user2DailyProgress = [false, false, false, false, false, false, false];
+          data.weekStart = new Date().toISOString();
+          
+          await firestoreHelpers.setDoc('goals', goalId, data);
+          
+          setYourCount(0);
+          setPartnerCount(0);
+          setYourDailyProgress([false, false, false, false, false, false, false]);
+          setPartnerDailyProgress([false, false, false, false, false, false, false]);
+          
+          alert('New week started!');
+        } catch (error) {
+          console.error('Error resetting week:', error);
+        }
+      };
+
+      const refreshCounts = async () => {
+        const goalId = currentGoalId || getGoalIdFromUrl();
+        if (!goalId) return;
+        
+        try {
+          const data = await firestoreHelpers.getDoc('goals', goalId);
+          if (!data) return;
+          
+          if (userId === 'user1') {
+            setPartnerCount(data.user2Count || 0);
+            setPartnerName(data.user2Name || 'Waiting...');
+            setPartnerDailyProgress(data.user2DailyProgress || [false, false, false, false, false, false, false]);
+          } else {
+            setPartnerCount(data.user1Count || 0);
+            setPartnerDailyProgress(data.user1DailyProgress || [false, false, false, false, false, false, false]);
+          }
+        } catch (error) {
+          console.error('Error refreshing counts:', error);
+        }
+      };
+
+      const copyLink = () => {
+        if (linkInputRef.current) {
+          linkInputRef.current.select();
+          linkInputRef.current.setSelectionRange(0, 99999);
+          document.execCommand('copy');
+          setLinkCopied(true);
+          setTimeout(() => setLinkCopied(false), 2000);
+        }
+      };
+
+      const goToTracker = () => {
+        setView('tracker');
+        refreshCounts();
+      };
+
+      const startNewGoal = () => {
+        window.history.pushState({}, '', window.location.pathname);
+        setView('create');
+        setInputName('');
+        setInputGoal('10');
+        setInputGoalTitle('');
+        setCurrentGoalId('');
+      };
+
+      useEffect(() => {
+        if (view === 'tracker') {
+          const interval = setInterval(refreshCounts, 5000);
+          return () => clearInterval(interval);
+        }
+      }, [view, userId, currentGoalId]);
+
+      if (view === 'loading') {
+        return (
+          <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+            <div className="text-stone-600">loading...</div>
+          </div>
+        );
+      }
+
+      if (view === 'create') {
+        return (
+          <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-xl p-10 max-w-md w-full border border-stone-200">
+              <div className="text-center mb-8">
+                <h1 className="text-4xl font-bold text-stone-800 mb-2">
+                  buddy up!
+                </h1>
+                <p className="text-stone-600">{tagline}</p>
+                
+                <div className="flex justify-center gap-2 mt-4">
+                  <div className="w-2 h-2 bg-orange-400 rounded-full"></div>
+                  <div className="w-2 h-2 bg-rose-400 rounded-full"></div>
+                  <div className="w-2 h-2 bg-amber-400 rounded-full"></div>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Your name</label>
+                  <input
+                    type="text"
+                    value={inputName}
+                    onChange={(e) => setInputName(e.target.value)}
+                    className="w-full px-4 py-3 border border-stone-300 rounded-xl focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none transition-all"
+                    placeholder="jonathan richman"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">What are you tracking?</label>
+                  <input
+                    type="text"
+                    value={inputGoalTitle}
+                    onChange={(e) => setInputGoalTitle(e.target.value)}
+                    className="w-full px-4 py-3 border border-stone-300 rounded-xl focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none transition-all"
+                    placeholder="e.g., cold emails, workouts, pages written"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Your weekly goal</label>
+                  <input
+                    type="number"
+                    value={inputGoal}
+                    onChange={(e) => setInputGoal(e.target.value)}
+                    className="w-full px-4 py-3 border border-stone-300 rounded-xl focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none transition-all"
+                    placeholder="10"
+                    min="1"
+                  />
+                </div>
+                
+                <button
+                  onClick={createGoal}
+                  className="w-full bg-orange-500 text-white py-3 rounded-xl font-semibold hover:bg-orange-600 transition-colors shadow-md hover:shadow-lg mt-6"
+                >
+                  Create Goal
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'share') {
+        return (
+          <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full border border-stone-200">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Sparkles className="w-8 h-8 text-orange-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-stone-800 mb-2">goal created</h2>
+                <p className="text-stone-600">share this link with your accountability partner</p>
+              </div>
+              
+              <div className="mb-4">
+                <input
+                  ref={linkInputRef}
+                  type="text"
+                  readOnly
+                  value={shareableLink}
+                  className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl text-sm text-stone-700 select-all"
+                  onFocus={(e) => e.target.select()}
+                />
+              </div>
+              
+              <div className="space-y-3">
+                <button
+                  onClick={copyLink}
+                  className={`w-full py-3 rounded-xl font-semibold transition-colors ${
+                    linkCopied 
+                      ? 'bg-green-500 text-white' 
+                      : 'bg-orange-500 text-white hover:bg-orange-600'
+                  }`}
+                >
+                  {linkCopied ? '✓ link copied!' : 'copy link'}
+                </button>
+                
+                <button
+                  onClick={goToTracker}
+                  className="w-full bg-stone-100 text-stone-700 py-3 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
+                >
+                  go to tracker
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'join') {
+        return (
+          <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full border border-stone-200">
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Sparkles className="w-8 h-8 text-orange-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-stone-800 mb-2">join {partnerName}'s goal</h2>
+                <p className="text-stone-700 font-medium mb-1">{goal} {goalTitle} per week</p>
+                <p className="text-sm text-orange-600">we got this!</p>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-stone-700 mb-2">Your name</label>
+                  <input
+                    type="text"
+                    value={inputName}
+                    onChange={(e) => setInputName(e.target.value)}
+                    className="w-full px-4 py-3 border border-stone-300 rounded-xl focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none transition-all"
+                    placeholder="enter your name"
+                  />
+                </div>
+                
+                <button
+                  onClick={joinGoal}
+                  className="w-full bg-orange-500 text-white py-3 rounded-xl font-semibold hover:bg-orange-600 transition-colors shadow-md hover:shadow-lg"
+                >
+                  join goal
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'tracker') {
+        const yourProgress = (yourCount / goal) * 100;
+        const partnerProgress = (partnerCount / goal) * 100;
+        const bothComplete = yourCount >= goal && partnerCount >= goal;
+        const youComplete = yourCount >= goal;
+        const partnerComplete = partnerCount >= goal;
+        
+        const dayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+        
+        return (
+          <div className="min-h-screen bg-stone-50 p-4">
+            <div className="max-w-2xl mx-auto pt-8 relative">
+              <button
+                onClick={startNewGoal}
+                className="absolute top-0 right-0 text-stone-400 hover:text-stone-600 text-sm font-medium"
+              >
+                + new goal
+              </button>
+              
+              <div className="text-center mb-6">
+                <h1 className="text-2xl font-bold text-stone-800 mb-1">
+                  {yourName} and {partnerName || '...'}'s weekly goal
+                </h1>
+                <p className="text-stone-600 font-medium mb-2">{goal} {goalTitle} each</p>
+                
+                <button
+                  onClick={() => {
+                    const link = window.location.href;
+                    const textArea = document.createElement('textarea');
+                    textArea.value = link;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    setLinkCopied(true);
+                    setTimeout(() => setLinkCopied(false), 2000);
+                  }}
+                  className="text-sm text-orange-600 hover:text-orange-700 font-medium"
+                >
+                  {linkCopied ? 'link copied!' : 'share with a friend →'}
+                </button>
+                
+                {bothComplete && (
+                  <p className="text-orange-600 font-semibold mt-2 text-lg">
+                    let's crush it!
+                  </p>
+                )}
+              </div>
+              
+              <div className="flex justify-center gap-2 mb-6">
+                {dayLabels.map((label, index) => {
+                  const yourDay = yourDailyProgress[index];
+                  const partnerDay = partnerDailyProgress[index];
+                  const bothDone = yourDay && partnerDay;
+                  
+                  return (
+                    <div
+                      key={index}
+                      className={`w-3 h-3 rounded-full ${
+                        bothDone
+                          ? 'bg-amber-400'
+                          : yourDay
+                          ? 'bg-orange-400'
+                          : partnerDay
+                          ? 'bg-rose-400'
+                          : 'bg-stone-200'
+                      }`}
+                      title={`${label}: ${yourDay ? yourName : ''} ${bothDone ? '&' : ''} ${partnerDay ? partnerName : ''}`}
+                    />
+                  );
+                })}
+              </div>
+              
+              <div className="space-y-6">
+                <div className={`bg-white rounded-3xl shadow-lg p-6 border transition-all ${
+                  youComplete ? 'border-orange-300 bg-orange-50' : 'border-stone-200'
+                }`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-stone-800">{yourName}</h3>
+                      <p className="text-sm text-stone-500">that's you</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-4xl font-bold text-orange-500">
+                        {yourCount}
+                      </span>
+                      <span className="text-2xl text-stone-400">/{goal}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="w-full bg-stone-200 rounded-full h-3 mb-4 overflow-hidden">
+                    <div
+                      className="h-3 rounded-full transition-all duration-500 bg-orange-400"
+                      style={{ width: `${Math.min(yourProgress, 100)}%` }}
+                    />
+                  </div>
+                  
+                  {!youComplete && yourCount > 0 && (
+                    <p className="text-sm text-stone-600 mb-3 text-center">
+                      {goal - yourCount === 1 
+                        ? "one more, let's go!" 
+                        : `${goal - yourCount} more, we got this!`}
+                    </p>
+                  )}
+                  
+                  <button
+                    onClick={incrementCount}
+                    disabled={youComplete}
+                    className={`w-full py-4 rounded-xl font-semibold text-lg transition-all ${
+                      youComplete
+                        ? 'bg-amber-100 text-amber-700 cursor-not-allowed'
+                        : 'bg-orange-500 text-white hover:bg-orange-600 shadow-md hover:shadow-lg'
+                    }`}
+                  >
+                    {youComplete ? 'crushed it!' : `+ add ${goalTitle ? goalTitle.replace(/s$/, '') : 'one'}`}
+                  </button>
+                </div>
+                
+                <div className={`bg-white rounded-3xl shadow-lg p-6 border transition-all ${
+                  partnerComplete ? 'border-rose-300 bg-rose-50' : 'border-stone-200'
+                }`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-stone-800">{partnerName || 'waiting...'}</h3>
+                      <p className="text-sm text-stone-500">your accountability partner</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-4xl font-bold text-rose-500">
+                        {partnerCount}
+                      </span>
+                      <span className="text-2xl text-stone-400">/{goal}</span>
+                    </div>
+                  </div>
+                  
+                  <div className="w-full bg-stone-200 rounded-full h-3 overflow-hidden">
+                    <div
+                      className="h-3 rounded-full transition-all duration-500 bg-rose-400"
+                      style={{ width: `${Math.min(partnerProgress, 100)}%` }}
+                    />
+                  </div>
+                  
+                  {partnerComplete && (
+                    <p className="text-sm text-rose-600 font-medium mt-3 text-center">
+                      {partnerName} crushed it!
+                    </p>
+                  )}
+                </div>
+              </div>
+              
+              <div className="mt-8 text-center space-y-3">
+                <button
+                  onClick={refreshCounts}
+                  className="text-orange-600 hover:text-orange-700 font-medium text-sm"
+                >
+                  ↻ refresh progress
+                </button>
+                <p className="text-xs text-stone-400">
+                  updates automatically every 5 seconds
+                </p>
+                
+                {bothComplete && (
+                  <div className="pt-4">
+                    <button
+                      onClick={resetWeek}
+                      className="bg-amber-400 text-stone-800 px-6 py-2 rounded-xl font-medium text-sm hover:bg-amber-500 transition-all shadow-md"
+                    >
+                      start new week
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return null;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
